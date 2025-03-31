@@ -42,10 +42,20 @@ client.on("interactionCreate", async (interaction) => {
                 await command.execute(interaction);
             } catch (error) {
                 console.error(error);
+                const errorMessage = error instanceof Error 
+                    ? `Error: ${error.message}` 
+                    : "An unexpected error occurred!";
+                    
                 if (interaction.replied || interaction.deferred) {
-                    await interaction.followUp({ content: "There was an error while executing this command!", ephemeral: true });
+                    await interaction.followUp({ 
+                        content: `There was an error while executing this command!\n${errorMessage}`, 
+                        ephemeral: true 
+                    });
                 } else {
-                    await interaction.reply({ content: "There was an error while executing this command!", ephemeral: true });
+                    await interaction.reply({ 
+                        content: `There was an error while executing this command!\n${errorMessage}`, 
+                        ephemeral: true 
+                    });
                 }
             }
         }
