@@ -1,6 +1,6 @@
 import { AutocompleteInteraction, ChatInputApplicationCommandData, ChatInputCommandInteraction, CommandInteraction, SlashCommandBuilder } from "discord.js";
 
-import { autocompleteCowType, runConsoleCommand } from "../../util/commands/cowsay";
+import { autocompleteCowType, runConsoleCommand, buildCowsayCommand } from "../../util/commands/cowsay";
 
 export default {
     data: new SlashCommandBuilder()
@@ -31,8 +31,8 @@ export default {
         const content: string | null = interaction.options.getString('content');
         const cowType: string = interaction.options.getString('cow_type') || "default";
 
-        const command = (cowType === "default" || cowType === "cow") ? `cowsay "${content}"` : `cowsay -f ${cowType} "${content}"`;
-        
+        const command = buildCowsayCommand(cowType, content ?? undefined);
+
         const replyMessage = await runConsoleCommand(command);
         await interaction.reply(replyMessage);
     },
