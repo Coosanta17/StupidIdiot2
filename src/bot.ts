@@ -1,21 +1,24 @@
+// Ignore errors here about imports, they do work IDK why vscode is showing errors.
 import { Client, ActivityType, Interaction, ChatInputCommandInteraction, AutocompleteInteraction } from "discord.js";
 import "dotenv/config";
 
 import { deployCommands, deployCommandsAll } from "./util/commands/deploy";
 import { config } from "./config";
 import { commands } from "./commands/export";
+import { downloadAllMessages } from "./download";
 
 // temporary
 deployCommandsAll();
 
-const client = new Client({
+export const client = new Client({
     intents: ["Guilds", "GuildMessages", "DirectMessages"],
 });
 
-client.on("ready", () => {
+client.on("ready", async () => {
     if (!client.user) throw "What the fuck just happened!? (Client user is null)";
     client.user.setActivity("Cow Simulator", { type: ActivityType.Playing });
     console.log(`Logged in as \"${client.user.tag}\"`);
+    await downloadAllMessages();
 });
 
 client.on("guildCreate", async (guild) => {
@@ -42,19 +45,19 @@ client.on("interactionCreate", async (interaction) => {
                 await command.execute(interaction);
             } catch (error) {
                 console.error(error);
-                const errorMessage = error instanceof Error 
-                    ? `Error: ${error.message}` 
+                const errorMessage = error instanceof Error
+                    ? `Error: ${error.message}`
                     : "An unexpected error occurred!";
-                    
+
                 if (interaction.replied || interaction.deferred) {
-                    await interaction.followUp({ 
-                        content: `There was an error while executing this command!\n${errorMessage}`, 
-                        ephemeral: true 
+                    await interaction.followUp({
+                        content: `There was an error while executing this command!\n${errorMessage}`,
+                        ephemeral: true
                     });
                 } else {
-                    await interaction.reply({ 
-                        content: `There was an error while executing this command!\n${errorMessage}`, 
-                        ephemeral: true 
+                    await interaction.reply({
+                        content: `There was an error while executing this command!\n${errorMessage}`,
+                        ephemeral: true
                     });
                 }
             }
