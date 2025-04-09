@@ -1,7 +1,7 @@
 from __future__ import annotations
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import ClassVar
 
 DATA_DIRECTORY = "../data/unprocessed/"
@@ -40,6 +40,51 @@ class Message:
     content: str
 
 @dataclass
+class MessageContext:
+    replied_user_id: str | None
+    replied_message_discord_id: str | None
+    id: int = -1
+
+    _next_id: ClassVar[int] = 1
+    _id_map: ClassVar[dict[str, int]] = {}
+
+    def __post_init__(self):
+        self.replied_message_id = None
+        self.replied_username = None
+        
+        if self.replied_user_id is not None:
+            if self.replied_user_id in User._user_id_map:
+                self.replied_username = User(self.replied_user_id).name
+            else:
+                self.replied_username = self.replied_user_id
+
+        if self.replied_message_discord_id is not None:
+            if self.replied_message_discord_id in MessageContext._id_map:
+                self.replied_message_id = MessageContext._id_map[self.replied_message_discord_id]
+        
+        if self.id == -1:
+            self.id = MessageContext._next_id
+            MessageContext._next_id += 1
+            
+            if self.replied_message_discord_id is not None:
+                MessageContext._id_map[self.replied_message_discord_id] = self.id
+
+    def formatted(self) -> str:
+        string: str = f"Message id {self.id}."
+        if self.replied_message_id is not None and self.replied_username is not None:
+            string += f" Replying to message id {self.replied_message_id} by {self.replied_username}."
+        elif self.replied_message_id is None and self.replied_username is not None:
+            string += f" Replying to an unknown message by {self.replied_username}."
+
+        return string
+
+    @classmethod
+    def reset_message_counter(cls):
+        cls._next_id = 1
+        cls._id_map = {}
+        print("reset message counter")
+
+@dataclass
 class RawMessage:
     author_id: str
     content: str
@@ -48,7 +93,7 @@ class RawMessage:
     replied_message_id: str | None
     replied_user_id: str | None
 
-    context: MessageContext | None = None
+    context: MessageContext = field(default_factory=lambda: MessageContext(None, None))
     
     def __post_init__(self):
         self.author = User(self.author_id)
@@ -57,50 +102,13 @@ class RawMessage:
     def format_message(self) -> Message:
         if self.author.name is None:
             raise Exception("User name is Null")
-        
-        if self.replied_user is not None and self.replied_message_id is not None:
-            context = MessageContext(self.replied_user.id, None)
-        else:
+    
+        if self.replied_user is not None or self.replied_message_id is not None:
+            context = MessageContext(self.replied_user.id if self.replied_user is not None else None, self.replied_message_id)
+        else: 
             context = MessageContext(None, None)
-
         return Message(self.author.name, context.formatted(), self.content)
     
-@dataclass
-class MessageContext:
-    replied_user_id: str | None
-    replied_message: RawMessage | None
-    id: int = -1
-
-    _next_id: ClassVar[int] = 1
-    _id_map: ClassVar[dict[str, int]] = {}
-
-    def __post_init__(self):
-        if self.replied_user_id is not None:
-            if self.replied_user_id in User._user_id_map:
-                self.replied_username = User(self.replied_user_id).name
-            else:
-                # Create a safer fallback
-                self.replied_username = f"Unknown-{self.replied_user_id[:5]}"
-        else:
-            self.replied_username = None
-        
-        if self.id == -1:
-            self.id = MessageContext._next_id
-            MessageContext._next_id += 1
-
-    def formatted(self) -> str:
-        string: str = f"Message id {self.id}."
-        if self.replied_message is not None and self.replied_username is not None and self.replied_message.context is not None:
-            string += f" Replying to message id {self.replied_message.context.id} by {self.replied_username}."
-        elif self.replied_message is None and self.replied_username is not None:
-            string += f" Replying to an unknown message by {self.replied_username}."
-
-        return string
-
-    @classmethod
-    def reset_message_counter(cls):
-        cls._next_id = 1
-
 @dataclass
 class Prompt:
     instruction: str
@@ -139,6 +147,9 @@ def process_messages_into_conversations(data: list) -> list[Prompt]:
         if conversation_length <= 0:
             return
             
+        User.reset_user_counter()
+        MessageContext.reset_message_counter()
+
         # Full conversation prompt
         if conversation_length != 1:
             formatted_full_messages = [msg.format_message() for msg in raw_messages[start_index:end_index]]
@@ -166,9 +177,6 @@ def process_messages_into_conversations(data: list) -> list[Prompt]:
             half_user = raw_messages[half_end_index - 1].author
             half_instruction = f"You are {half_user.name} engaging in a conversation on Discord."
             prompts.append(Prompt(half_instruction, formatted_half_messages))
-
-        User.reset_user_counter()
-        MessageContext.reset_message_counter()
 
     total_length = len(data)
 
@@ -198,6 +206,7 @@ def process_messages_into_conversations(data: list) -> list[Prompt]:
         
     return prompts
 
+#TODO: fix message and user ids - this is from the saving stuff
 def save_prompts_to_jsonl(prompts: list[Prompt]) -> None:
     output_path = "../data/processed/prompts.jsonl"
 
