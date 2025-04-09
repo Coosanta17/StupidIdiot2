@@ -1,8 +1,12 @@
+from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
 from typing import ClassVar
-from __future__ import annotations # I shouldn't need to import this but it's broken otherwise
+
+DATA_DIRECTORY = "../data/unprocessed/"
+MAX_CONVERSATION_LENGTH = 20
+ONE_HOUR = 3600000
 
 @dataclass
 class User:
@@ -55,7 +59,7 @@ class RawMessage:
             raise Exception("User name is Null")
         
         if self.replied_user is not None and self.replied_message_id is not None:
-            context = MessageContext(self.replied_user, None)
+            context = MessageContext(self.replied_user.id, None)
         else:
             context = MessageContext(None, None)
 
@@ -71,7 +75,15 @@ class MessageContext:
     _id_map: ClassVar[dict[str, int]] = {}
 
     def __post_init__(self):
-        self.replied_username: str = User(self.replied_user_id).name if self.replied_user_id in User._user_id_map else self.replied_user_id
+        if self.replied_user_id is not None:
+            if self.replied_user_id in User._user_id_map:
+                self.replied_username = User(self.replied_user_id).name
+            else:
+                # Create a safer fallback
+                self.replied_username = f"Unknown-{self.replied_user_id[:5]}"
+        else:
+            self.replied_username = None
+        
         if self.id == -1:
             self.id = MessageContext._next_id
             MessageContext._next_id += 1
@@ -94,8 +106,6 @@ class Prompt:
     instruction: str
     messages: list[Message]
 
-DATA_DIRECTORY: str = "../data/unprocessed/"
-
 def load_message_data(directory_path) -> list[dict[str, str]]:
     messages: list = []
 
@@ -108,10 +118,11 @@ def load_message_data(directory_path) -> list[dict[str, str]]:
             continue
         file_path = os.path.join(directory_path, filename)
         try:
-            with open(file_path, "r") as file:
+            with open(file_path, "r", encoding="utf-8") as file:
                 data: dict = json.load(file)
-                messages.append(data)
-                print(f"Loaded {filename}")
+                if isinstance(data, list):
+                    messages.extend(data)
+                    print(f"Loaded {filename} with {len(data)} messages")
         except Exception as e:
             print(f"Error loading {filename}, {type(e).__name__} - {e}")
 
@@ -119,42 +130,72 @@ def load_message_data(directory_path) -> list[dict[str, str]]:
 
 def process_messages_into_conversations(data: list) -> list[Prompt]:
     prompts: list[Prompt] = []
-
+    raw_messages: list[RawMessage] = []
     start_index: int = 0
-    current_index: int = -1
 
-    for message in data:
-        current_index += 1
-        raw_messages: list[RawMessage] = []
-        raw_message: RawMessage = dict_to_raw_message(message)
+    def process_conversation_segment(start_index: int, end_index: int):
+        conversation_length = end_index - start_index
+        
+        if conversation_length <= 0:
+            return
+            
+        # Full conversation prompt
+        if conversation_length != 1:
+            formatted_full_messages = [msg.format_message() for msg in raw_messages[start_index:end_index]]
+            user = raw_messages[end_index - 1].author
+            
+            instruction = f"You are {user.name} engaging in a conversation on Discord."
+            prompts.append(Prompt(instruction, formatted_full_messages))
+        
+        User.reset_user_counter()
+        MessageContext.reset_message_counter()
+        
+        # First message only (conversation starter)
+        first_message = [raw_messages[start_index].format_message()]
+        first_instruction = f"You are {raw_messages[start_index].author.name} starting a conversation on Discord."
+        prompts.append(Prompt(first_instruction, first_message))
+        
+        User.reset_user_counter()
+        MessageContext.reset_message_counter()
 
+        # Half conversation
+        if conversation_length > 10:
+            half_length = conversation_length // 2
+            half_end_index = start_index + half_length
+            formatted_half_messages = [msg.format_message() for msg in raw_messages[start_index:half_end_index]]
+            half_user = raw_messages[half_end_index - 1].author
+            half_instruction = f"You are {half_user.name} engaging in a conversation on Discord."
+            prompts.append(Prompt(half_instruction, formatted_half_messages))
+
+        User.reset_user_counter()
+        MessageContext.reset_message_counter()
+
+    total_length = len(data)
+
+    for i, message in enumerate(data):
+        raw_message = dict_to_raw_message(message)
+        
         if str(raw_message.content).strip() == "":
             continue
-
-        if current_index == 0:
-            raw_messages.append(raw_message)
-            continue
-        
-        if raw_message.timestamp - raw_messages[current_index - 1].timestamp >= 3600000 or current_index - start_index >= 20: # 1 hour difference
-            user: User = raw_messages[current_index - 1].author
-
-            formatted_messages = [msg.format_message() for msg in raw_messages[start_index:current_index - 1]]
-
-            instruction: str
-
-            if current_index > start_index:
-                instruction = f"You are {user.name} engaging in a conversation on Discord."
-            elif current_index == start_index:
-                instruction = f"You are {user.name} starting a conversation on Discord."
             
-            prompt = Prompt(instruction, formatted_messages)
-            prompts.append(prompt)
-
-            User.reset_user_counter()
-            MessageContext.reset_message_counter()
-            start_index = current_index
-
         raw_messages.append(raw_message)
+        
+        if len(raw_messages) > 1 and (
+            raw_message.timestamp - raw_messages[-2].timestamp >= ONE_HOUR or 
+            len(raw_messages) - start_index > MAX_CONVERSATION_LENGTH
+        ):
+
+            process_conversation_segment(start_index, len(raw_messages) - 1)
+            
+            start_index = len(raw_messages) - 1
+        
+        # Debug
+        print(f"Processed {i+1} messages out of {total_length}")
+    
+    # Process the final conversation
+    if len(raw_messages) > start_index:
+        process_conversation_segment(start_index, len(raw_messages))
+        
     return prompts
 
 def save_prompts_to_jsonl(prompts: list[Prompt]) -> None:
@@ -167,7 +208,7 @@ def save_prompts_to_jsonl(prompts: list[Prompt]) -> None:
 
             prompt_dict = {
                 "instruction": prompt.instruction,
-                "messages": [{"role": msg.role, "content": msg.content} for msg in prompt.messages]
+                "messages": [{"role": msg.role, "context": msg.context, "content": msg.content} for msg in prompt.messages]
             }
 
             file.write(json.dumps(prompt_dict) + "\n")
@@ -175,13 +216,37 @@ def save_prompts_to_jsonl(prompts: list[Prompt]) -> None:
     print(f"Saved {len(prompts)} prompts to {output_path}")
 
 def dict_to_raw_message(message: dict) -> RawMessage:
+    required_fields = ["authorId", "content", "id", "createdTimestamp"]
+    for field in required_fields:
+        if field not in message:
+            raise ValueError(f"Missing required field: {field}")
+    
+    replied_message_id = None
+    if message.get("reference") is not None:
+        replied_message_id = message["reference"].get("messageId")
+    
+    replied_user_id = None
+    if message.get("mentions") is not None:
+        replied_user_id = message["mentions"].get("repliedUser")
+    
     return RawMessage(
         message["authorId"],
         message["content"], 
         message["id"], 
         message["createdTimestamp"],
-        message["reference"]["messageId"] if message["reference"] is not None else None,
-        message["mentions"]["repliedUser"]
+        replied_message_id,
+        replied_user_id
     )
 
-messages: list = load_message_data(DATA_DIRECTORY)
+def main():
+    messages = load_message_data(DATA_DIRECTORY)
+    if not messages:
+        print("No messages found to process.")
+        return
+        
+    prompts = process_messages_into_conversations(messages)
+    save_prompts_to_jsonl(prompts)
+    print(f"Processing complete: {len(prompts)} prompts generated.")
+
+if __name__ == "__main__":
+    main()
