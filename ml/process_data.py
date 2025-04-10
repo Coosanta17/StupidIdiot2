@@ -9,31 +9,6 @@ MAX_CONVERSATION_LENGTH = 20
 ONE_HOUR = 3600000
 
 @dataclass
-class User:
-    id: str
-    name: str | None = None
-    
-    _next_user_number: ClassVar[int] = 1
-    _user_id_map: ClassVar[dict[str, str]] = {}
-    
-    def __post_init__(self):
-        if self.name is None:
-            self.create_name()
-
-    def create_name(self):
-        if self.id in User._user_id_map:
-            self.name = User._user_id_map[self.id]
-        else:
-            self.name = f"User {User._next_user_number}"
-            User._user_id_map[self.id] = self.name
-            User._next_user_number += 1
-    
-    @classmethod
-    def reset_user_counter(cls):
-        cls._next_user_number = 1
-        cls._user_id_map = {}
-
-@dataclass
 class Message:
     role: str
     context: str
@@ -41,48 +16,19 @@ class Message:
 
 @dataclass
 class MessageContext:
-    replied_user_id: str | None
-    replied_message_discord_id: str | None
+    replied_user: str | None
+    replied_message_id: int | None
     id: int = -1
 
-    _next_id: ClassVar[int] = 1
-    _id_map: ClassVar[dict[str, int]] = {}
-
-    def __post_init__(self):
-        self.replied_message_id = None
-        self.replied_username = None
-        
-        if self.replied_user_id is not None:
-            if self.replied_user_id in User._user_id_map:
-                self.replied_username = User(self.replied_user_id).name
+    def format(self) -> str:
+        string = f"Message id {self.id}."
+        if self.replied_user is not None:
+            if self.replied_message_id is not None:
+                string += f" Replying to message id {self.replied_message_id} by {self.replied_user}."
             else:
-                self.replied_username = self.replied_user_id
-
-        if self.replied_message_discord_id is not None:
-            if self.replied_message_discord_id in MessageContext._id_map:
-                self.replied_message_id = MessageContext._id_map[self.replied_message_discord_id]
-        
-        if self.id == -1:
-            self.id = MessageContext._next_id
-            MessageContext._next_id += 1
-            
-            if self.replied_message_discord_id is not None:
-                MessageContext._id_map[self.replied_message_discord_id] = self.id
-
-    def formatted(self) -> str:
-        string: str = f"Message id {self.id}."
-        if self.replied_message_id is not None and self.replied_username is not None:
-            string += f" Replying to message id {self.replied_message_id} by {self.replied_username}."
-        elif self.replied_message_id is None and self.replied_username is not None:
-            string += f" Replying to an unknown message by {self.replied_username}."
+                string += f" Replying to an unknown message by {self.replied_user}."
 
         return string
-
-    @classmethod
-    def reset_message_counter(cls):
-        cls._next_id = 1
-        cls._id_map = {}
-        print("reset message counter")
 
 @dataclass
 class RawMessage:
@@ -93,26 +39,61 @@ class RawMessage:
     replied_message_id: str | None
     replied_user_id: str | None
 
+    author: str | None = None
     context: MessageContext = field(default_factory=lambda: MessageContext(None, None))
-    
-    def __post_init__(self):
-        self.author = User(self.author_id)
-        self.replied_user = User(self.replied_user_id) if self.replied_user_id is not None else None
 
-    def format_message(self) -> Message:
-        if self.author.name is None:
-            raise Exception("User name is Null")
-    
-        if self.replied_user is not None or self.replied_message_id is not None:
-            context = MessageContext(self.replied_user.id if self.replied_user is not None else None, self.replied_message_id)
-        else: 
-            context = MessageContext(None, None)
-        return Message(self.author.name, context.formatted(), self.content)
+    def format(self) -> str:
+        return Message(self.author if self.author is not None else self.author_id, self.context.format(), self.content).__str__()
     
 @dataclass
 class Prompt:
     instruction: str
-    messages: list[Message]
+    messages: list[RawMessage]
+    
+    _next_user_number: int = 1
+    _user_id_map: dict[str, str] = field(default_factory=dict)
+
+    _next_message_id: int = 1
+    _message_id_map: dict[str, int] = field(default_factory=dict)
+
+    def __post_init__(self):
+        for message in self.messages:
+            if message.author is not None:
+                print("error: iterating over messages that have already been processed")
+                continue
+
+            # Set author username
+            if message.author_id in self._user_id_map:
+                message.author = self._user_id_map[message.author_id]
+            else:
+                message.author = f"User {self._next_user_number}"
+                self._next_message_id += 1
+                self._user_id_map[message.author_id] = message.author
+
+            # Set message context
+            message.context.id = self._next_message_id
+            self._next_message_id += 1
+            self._message_id_map[message.message_id] = message.context.id
+
+            # Set replied message ids in context
+            if message.replied_message_id is not None:
+                if message.replied_message_id in self._message_id_map:
+                    message.context.replied_message_id = self._message_id_map[message.replied_message_id]
+
+                if message.replied_user_id in self._user_id_map:
+                    message.context.replied_user = self._user_id_map[message.replied_user_id]
+
+    def format(self):
+        formatted_messages: list[str] = []
+        for raw_message in self.messages:
+            formatted_messages.append(raw_message.format())
+
+        return {
+            "instruction": self.instruction,
+            "messages": formatted_messages
+        }
+
+
 
 def load_message_data(directory_path) -> list[dict[str, str]]:
     messages: list = []
@@ -146,36 +127,27 @@ def process_messages_into_conversations(data: list) -> list[Prompt]:
         
         if conversation_length <= 0:
             return
-            
-        User.reset_user_counter()
-        MessageContext.reset_message_counter()
 
         # Full conversation prompt
         if conversation_length != 1:
-            formatted_full_messages = [msg.format_message() for msg in raw_messages[start_index:end_index]]
+            formatted_full_messages = [msg for msg in raw_messages[start_index:end_index]]
             user = raw_messages[end_index - 1].author
             
-            instruction = f"You are {user.name} engaging in a conversation on Discord."
+            instruction = f"You are {user} engaging in a conversation on Discord."
             prompts.append(Prompt(instruction, formatted_full_messages))
         
-        User.reset_user_counter()
-        MessageContext.reset_message_counter()
-        
         # First message only (conversation starter)
-        first_message = [raw_messages[start_index].format_message()]
-        first_instruction = f"You are {raw_messages[start_index].author.name} starting a conversation on Discord."
+        first_message = [raw_messages[start_index]]
+        first_instruction = f"You are {raw_messages[start_index].author} starting a conversation on Discord."
         prompts.append(Prompt(first_instruction, first_message))
-        
-        User.reset_user_counter()
-        MessageContext.reset_message_counter()
 
         # Half conversation
         if conversation_length > 10:
             half_length = conversation_length // 2
             half_end_index = start_index + half_length
-            formatted_half_messages = [msg.format_message() for msg in raw_messages[start_index:half_end_index]]
+            formatted_half_messages = [msg for msg in raw_messages[start_index:half_end_index]]
             half_user = raw_messages[half_end_index - 1].author
-            half_instruction = f"You are {half_user.name} engaging in a conversation on Discord."
+            half_instruction = f"You are {half_user} engaging in a conversation on Discord."
             prompts.append(Prompt(half_instruction, formatted_half_messages))
 
     total_length = len(data)
@@ -214,13 +186,9 @@ def save_prompts_to_jsonl(prompts: list[Prompt]) -> None:
 
     with open(output_path, "w") as file:
         for prompt in prompts:
-
-            prompt_dict = {
-                "instruction": prompt.instruction,
-                "messages": [{"role": msg.role, "context": msg.context, "content": msg.content} for msg in prompt.messages]
-            }
-
-            file.write(json.dumps(prompt_dict) + "\n")
+            prompt_string = prompt.format()
+            file.write(json.dumps(prompt_string) + "\n")
+            pass
 
     print(f"Saved {len(prompts)} prompts to {output_path}")
 
