@@ -1,13 +1,14 @@
 {
   "name": "stupididiot2",
   "version": "0.0.1",
-  "description": "A discord bot that is stupid (the sequal)",
+  "description": "A discord bot that is stupid (the sequel)",
   "main": "dist/bot.js",
   "scripts": {
     "test": "echo Haha there is no test!",
     "dev": "tsx watch src/bot.ts",
     "build": "tsup src/bot.ts --minify",
-    "start": "npm run build && node dist/bot.js"
+    "start": "npm run build && node dist/bot.js",
+    "process-data": "tsx ml/process_data.ts"
   },
   "repository": {
     "type": "git",
