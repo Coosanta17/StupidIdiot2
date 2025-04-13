@@ -324,14 +324,14 @@ function generatePrompts(messages: RawMessage[]): Prompt[] {
         }
 
         if (messages[index].getTimeStamp() - messages[index - 1].getTimeStamp() > ONE_HOUR) {
-            pushPrompt();
             addHalfPrompt(conversationLength);
+            pushPrompt();
             continue;
         }
 
         if (conversationLength >= MAX_CONVERSATION_LENGTH) {
-            pushPrompt();
             addHalfPrompt(conversationLength);
+            pushPrompt();
             continue;
         }
 
