@@ -36,4 +36,4 @@ export default {
         const replyMessage = await runConsoleCommand(command);
         await interaction.reply(replyMessage);
     },
-}
+};

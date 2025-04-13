@@ -16,6 +16,6 @@ export default {
                 { name: "Example usage", value: `\`/cowsay 'Hello world!' ${randomChoice}\`` },
             );
 
-        interaction.reply({ embeds: [response] })
+        interaction.reply({ embeds: [response] });
     }
-}
+};

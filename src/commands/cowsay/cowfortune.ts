@@ -20,9 +20,9 @@ export default {
     async execute(interaction: ChatInputCommandInteraction) {
         const cowType = interaction.options.getString('cow_type') || "default";
 
-        const command = buildCowsayCommand(cowType)
+        const command = buildCowsayCommand(cowType);
 
         const replyMessage = await runConsoleCommand(command);
         await interaction.reply(replyMessage);
     }
-}
+};

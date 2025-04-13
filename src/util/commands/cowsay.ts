@@ -36,7 +36,7 @@ function runCommandWithOutput(command: string): Promise<{ content: string | null
 }
 
 export async function runConsoleCommand(command: string): Promise<InteractionReplyOptions> {
-    const result: { content: string | null, status: 'success' | 'error' | 'stderr' } = await runCommandWithOutput(command)
+    const result: { content: string | null, status: 'success' | 'error' | 'stderr' } = await runCommandWithOutput(command);
 
     // TODO: ephemeral deprecated - use tags
     if (result.status === 'error') {
