@@ -151,7 +151,7 @@ class MessageContext {
 
 class Prompt {
     private instruction: string;
-    private readonly messages: Array<RawMessage>;
+    private readonly messages: ReadonlyArray<RawMessage>;
 
     private nextUserNumber: number = 1;
     private userIdMap: Map<string, number> = new Map<string, number>();
@@ -160,7 +160,7 @@ class Prompt {
     private messageIdMap: Map<string, number> = new Map<string, number>();
 
     public constructor(messages: Array<RawMessage>) {
-        this.messages = messages;
+        this.messages = [...messages];
 
         let userId: number;
         this.messages.forEach((message) => {
@@ -193,7 +193,7 @@ class Prompt {
         const historyMessages = new Array<Message>();
         historyRawMessages.forEach((message) => {
             let formattedContext: string;
-            let formattedUsername: string = "unknown";
+            let formattedUsername: string;
 
             if (message.getContext()) {
                 formattedContext = message.getContext()!.toString();
@@ -204,7 +204,7 @@ class Prompt {
             if (this.userIdMap.has(message.getAuthorId())) {
                 formattedUsername = toUsername(this.userIdMap.get(message.getAuthorId())!);
             } else {
-                console.error(`User ID ${message.getAuthorId()} not found in userIdMap`); // FIXME
+                throw new Error(`User ID ${message.getAuthorId()} not found in userIdMap`);
             }
 
             historyMessages.push(new Message(formattedUsername, formattedContext, message.getContent()));
