@@ -220,7 +220,8 @@ class Prompt {
         const object = {
             instruction: this.instruction,
             context: historyMessages,
-            response: this.messages.at(-1)!.getContent()
+            response: this.messages.at(-1)!.getContent(),
+            responseUser: this.userIdMap.get(this.messages.at(-1)!.getAuthorId())
         };
 
         return JSON.stringify(object);
