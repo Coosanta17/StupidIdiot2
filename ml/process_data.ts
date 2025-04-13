@@ -52,11 +52,13 @@ class RawMessage {
     private repliedUserId?: string
     private context: MessageContext | undefined
 
-    public constructor(authorId: string, content: string, discordMessageId: string, timeStamp: number) {
+    public constructor(authorId: string, content: string, discordMessageId: string, timeStamp: number, repliedUserId?: string, repliedMessageId?: string) {
         this.authorId = authorId;
         this.content = content;
         this.discordMessageId = discordMessageId;
         this.timeStamp = timeStamp;
+        this.repliedUserId = repliedUserId;
+        this.repliedMessageId = repliedMessageId;
     }
 
     public getAuthorId(): string {
@@ -120,8 +122,7 @@ class MessageContext {
         let string: string = "";
         string += `Message ID ${this.id}.`;
 
-        if (this.repliedMessageId || this.repliedUserId) { // TODO
-            console.debug("received replying message");
+        if (this.repliedMessageId || this.repliedUserId) {
             string += `\nReplying to`;
 
             if (this.repliedMessageId) {
@@ -225,7 +226,7 @@ class Prompt {
         return JSON.stringify(object);
     }
 
-    private initialiseMessageContext(message: RawMessage) { // FIXME
+    private initialiseMessageContext(message: RawMessage) {
         const newId = this.newMessageId();
 
         this.messageIdMap.set(message.getDiscordMessageId(), newId);
@@ -243,6 +244,9 @@ class Prompt {
                     undefined,
                     this.userIdMap.get(message.getRepliedUserId()!)!
                 ));
+            } else {
+                // console.warn("Reply message outside of scope found");
+                message.setContext(new MessageContext(newId, undefined, undefined));
             }
         } else {
             message.setContext(new MessageContext(newId, undefined, undefined));
@@ -289,7 +293,9 @@ function loadMessageData(directoryPath: string): Array<RawMessage> {
                         String(msg.authorId),
                         msg.content,
                         msg.id,
-                        msg.createdTimestamp
+                        msg.createdTimestamp,
+                        msg.mentions?.repliedUser || undefined,
+                        msg.reference?.messageId || undefined
                     ));
 
                 messages.push(...validMessages);
