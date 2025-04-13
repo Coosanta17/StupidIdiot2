@@ -96,7 +96,12 @@ class RawMessage {
     }
 
     public setContext(context: MessageContext): void {
-        this.context = context;
+        // Defensive copy - not an inefficiency
+        this.context = new MessageContext(
+            context.getId(),
+            context.getRepliedMessageId(),
+            context.getRepliedUser()
+        );
     }
 }
 
@@ -115,7 +120,8 @@ class MessageContext {
         let string: string = "";
         string += `Message ID ${this.id}.`;
 
-        if (this.repliedMessageId || this.repliedUserId) {
+        if (this.repliedMessageId || this.repliedUserId) { // TODO
+            console.debug("received replying message");
             string += `\nReplying to`;
 
             if (this.repliedMessageId) {
@@ -219,24 +225,27 @@ class Prompt {
         return JSON.stringify(object);
     }
 
-    private initialiseMessageContext(message: RawMessage) {
+    private initialiseMessageContext(message: RawMessage) { // FIXME
+        const newId = this.newMessageId();
+
+        this.messageIdMap.set(message.getDiscordMessageId(), newId);
+        
         if (message.getRepliedUserId() && message.getRepliedMessageId()) {
             if (this.userIdMap.has(message.getRepliedUserId()!) && this.messageIdMap.has(message.getRepliedMessageId()!)) {
                 message.setContext(new MessageContext(
-                    this.newMessageId(),
+                    newId,
                     this.messageIdMap.get(message.getRepliedMessageId()!)!,
                     this.userIdMap.get(message.getRepliedUserId()!)!
-
                 ));
             } else if (this.userIdMap.has(message.getRepliedUserId()!)) {
                 message.setContext(new MessageContext(
-                    this.newMessageId(),
+                    newId,
                     undefined,
                     this.userIdMap.get(message.getRepliedUserId()!)!
                 ));
             }
         } else {
-            message.setContext(new MessageContext(this.newMessageId(), undefined, undefined));
+            message.setContext(new MessageContext(newId, undefined, undefined));
         }
     }
 
