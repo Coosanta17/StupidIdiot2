@@ -5,3 +5,4 @@ data
 ml/venv
 ml/models
 ml/bitsandbytes
+.jsonl

@@ -2,19 +2,21 @@ import os
 import pandas as pd # type: ignore
 from typing import TypedDict, List
 import json
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, DataCollatorForLanguageModeling, Trainer, TrainingArguments
 from peft import get_peft_model, LoraConfig, TaskType
 import torch
-from accelerate import infer_auto_device_map, init_empty_weights # type: ignore
+from peft import prepare_model_for_kbit_training, LoraConfig, get_peft_model
+from datasets import load_dataset # type: ignore
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0" 
-MODEL_PATH = "./models/Mistral-7B-v0.3/"
-QUANTIZE = False
 
-with init_empty_weights():
-    model = AutoModelForCausalLM.from_pretrained(MODEL_PATH, trust_remote_code=True)
+MODEL_PATH = "./models/Llama-3.2-3B/"
+END_OF_TEXT_TOKEN = "<|end_of_text|>"
 
-device_map = infer_auto_device_map(model, max_memory={0: "4GiB", "cpu": "14GiB"})
+# with init_empty_weights():
+#     model = AutoModelForCausalLM.from_pretrained(MODEL_PATH, trust_remote_code=True)
+
+# device_map = infer_auto_device_map(model, max_memory={0: "4GiB", "cpu": "14GiB"})
 
 class Message(TypedDict):
     role: str
@@ -47,6 +49,7 @@ class Conversation:
         
         result += "\n### Response:\n"
         result += response_message["content"]
+        result += END_OF_TEXT_TOKEN
         
         return result
 
@@ -72,85 +75,116 @@ for prompt in data:
 
     conversations.append(conversation)
 
-# # Debug
-# for conversation in conversations[0:10]:
-#     print(conversation.to_prompt_format())
-#     print("-" * 40)
+conversations_jsonl = './conversations_prompt_format.jsonl'
 
+with open(conversations_jsonl, 'w', encoding='utf-8') as f:
+    for conversation in conversations:
+        json_obj = {"text": conversation.to_prompt_format()}
+        f.write(json.dumps(json_obj) + '\n')
 
-tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
+print(f"Wrote {len(conversations)} conversations to {conversations_jsonl}")
 
 if torch.cuda.is_available():
     print(f"CUDA available: {torch.cuda.get_device_name(0)}")
     print(f"CUDA version: {torch.version.cuda}")
     
-    try:
-        print("Attempting 4-bit quantization...")
-        quantization_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_compute_dtype=torch.float16,
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_quant_type="nf4"
-        )
-        
-        print("Loading model...")
-        model = AutoModelForCausalLM.from_pretrained(
-            MODEL_PATH,
-            quantization_config=quantization_config,
-            torch_dtype=torch.float16,
-            device_map=device_map,
-            trust_remote_code=True
-        )
-        print("Successfully loaded model with 4-bit quantization")
-    except Exception as e:
-        print(f"4-bit quantization failed: {e}")
-        
-        try:
-            print("Attempting half precision (no quantization)...")
-            model = AutoModelForCausalLM.from_pretrained(
-                MODEL_PATH,
-                torch_dtype=torch.float16,
-                device_map=device_map,
-                trust_remote_code=True
-            )
-            print("Successfully loaded model in half precision")
-        except Exception as e2:
-            print(f"Half precision failed: {e2}")
-            
-            user_input = input("Do you want to fall back to CPU mode? (y/n): ").strip().lower()
-            if user_input == 'y':
-                print("Falling back to CPU mode...")
-                model = AutoModelForCausalLM.from_pretrained(
-                    MODEL_PATH,
-                    device_map="cpu",
-                    trust_remote_code=True
-                )
-                print("Model loaded on CPU (this will be slow)")
-            else:
-                print("Operation cancelled.")
-                exit()
+    print("Attempting 4-bit quantization...")
+    quantization_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.float16,
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_quant_type="nf4",
+        llm_int8_enable_fp32_cpu_offload=True
+    )
+    
+    print("Loading model...")
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_PATH,
+        quantization_config=quantization_config,
+        torch_dtype=torch.float16,
+        device_map="auto",
+        trust_remote_code=True
+    )
+    print("Successfully loaded model with 4-bit quantization")
 else:
-    print("No CUDA device found.")
-    user_input = input("Do you want to use CPU mode? (y/n): ").strip().lower()
-    if user_input == 'y':
-        print("Using CPU mode (this will be slow)...")
+    user_input = input("CUDA is not available. Do you want to load on CPU? (Y/N): ")
+    if user_input.strip().lower() == "y":
+        print("Loading model on CPU (this might be slow)...")
         model = AutoModelForCausalLM.from_pretrained(
             MODEL_PATH,
             device_map="cpu",
-            trust_remote_code=True
+            trust_remote_code=True,
+            low_cpu_mem_usage=True
         )
+
+        print("Model loaded on CPU")
     else:
-        print("Operation cancelled.")
+        print("Cancelled")
         exit()
+
+model = prepare_model_for_kbit_training(model)
+tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
+tokenizer.pad_token = END_OF_TEXT_TOKEN 
 
 lora_config = LoraConfig(
     r=8,
-    lora_alpha=32,
-    target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
-    lora_dropout=0.05,
+    lora_alpha=16,
+    target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+    lora_dropout=0.1,
     bias="none",
     task_type=TaskType.CAUSAL_LM,
 )
 
 model = get_peft_model(model, lora_config)
 model.print_trainable_parameters()
+
+dataset = load_dataset("json", data_files=conversations_jsonl, split="train")
+
+MAX_LENGTH = 1024
+
+def tokenize_fn(ex):
+    tokens = tokenizer(
+        ex["text"],
+        truncation=True,
+        max_length=MAX_LENGTH,
+        padding="max_length",
+    )
+    # For causal LM, labels = input_ids
+    tokens["labels"] = tokens["input_ids"].copy()
+    return tokens
+
+tokenized = dataset.map(
+    tokenize_fn,
+    batched=True,
+    remove_columns=["text"],
+    num_proc=4,
+)
+
+data_collator = DataCollatorForLanguageModeling(
+    tokenizer=tokenizer,
+    mlm=False,
+    pad_to_multiple_of=8,
+)
+
+training_args = TrainingArguments(
+    output_dir="./lora-finetuned",
+    per_device_train_batch_size=4,
+    gradient_accumulation_steps=8,
+    num_train_epochs=6,
+    learning_rate=1e-4,
+    fp16=True,
+    logging_steps=50,
+    save_steps=200,
+    save_total_limit=3,
+    remove_unused_columns=False,
+)
+
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=tokenized,
+    data_collator=data_collator,
+)
+
+trainer.train()
+trainer.save_model("./lora-finetuned")
