@@ -4,3 +4,4 @@ dist
 data
 ml/venv
 ml/models
+ml/bitsandbytes

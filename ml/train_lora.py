@@ -5,10 +5,16 @@ import json
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from peft import get_peft_model, LoraConfig, TaskType
 import torch
+from accelerate import infer_auto_device_map, init_empty_weights # type: ignore
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0" 
-
 MODEL_PATH = "./models/Mistral-7B-v0.3/"
+QUANTIZE = False
+
+with init_empty_weights():
+    model = AutoModelForCausalLM.from_pretrained(MODEL_PATH, trust_remote_code=True)
+
+device_map = infer_auto_device_map(model, max_memory={0: "4GiB", "cpu": "14GiB"})
 
 class Message(TypedDict):
     role: str
@@ -66,34 +72,71 @@ for prompt in data:
 
     conversations.append(conversation)
 
-# Debug
-for conversation in conversations[0:10]:
-    print(conversation.to_prompt_format())
-    print("-" * 40)
+# # Debug
+# for conversation in conversations[0:10]:
+#     print(conversation.to_prompt_format())
+#     print("-" * 40)
 
 
 tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
 
-try:
-    quantization_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_compute_dtype=torch.float16
-    )
+if torch.cuda.is_available():
+    print(f"CUDA available: {torch.cuda.get_device_name(0)}")
+    print(f"CUDA version: {torch.version.cuda}")
     
-    model = AutoModelForCausalLM.from_pretrained(
-        MODEL_PATH,
-        quantization_config=quantization_config,
-        device_map="auto",
-        trust_remote_code=True
-    )
-except RuntimeError:
-    print("GPU quantization not available.")
-    user_input = input("Do you want to fall back to CPU mode? (y/n): ").strip().lower()
-    if user_input == 'y':
-        print("Falling back to CPU mode...")
+    try:
+        print("Attempting 4-bit quantization...")
+        quantization_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=torch.float16,
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_quant_type="nf4"
+        )
+        
+        print("Loading model...")
         model = AutoModelForCausalLM.from_pretrained(
             MODEL_PATH,
-            device_map="auto",
+            quantization_config=quantization_config,
+            torch_dtype=torch.float16,
+            device_map=device_map,
+            trust_remote_code=True
+        )
+        print("Successfully loaded model with 4-bit quantization")
+    except Exception as e:
+        print(f"4-bit quantization failed: {e}")
+        
+        try:
+            print("Attempting half precision (no quantization)...")
+            model = AutoModelForCausalLM.from_pretrained(
+                MODEL_PATH,
+                torch_dtype=torch.float16,
+                device_map=device_map,
+                trust_remote_code=True
+            )
+            print("Successfully loaded model in half precision")
+        except Exception as e2:
+            print(f"Half precision failed: {e2}")
+            
+            user_input = input("Do you want to fall back to CPU mode? (y/n): ").strip().lower()
+            if user_input == 'y':
+                print("Falling back to CPU mode...")
+                model = AutoModelForCausalLM.from_pretrained(
+                    MODEL_PATH,
+                    device_map="cpu",
+                    trust_remote_code=True
+                )
+                print("Model loaded on CPU (this will be slow)")
+            else:
+                print("Operation cancelled.")
+                exit()
+else:
+    print("No CUDA device found.")
+    user_input = input("Do you want to use CPU mode? (y/n): ").strip().lower()
+    if user_input == 'y':
+        print("Using CPU mode (this will be slow)...")
+        model = AutoModelForCausalLM.from_pretrained(
+            MODEL_PATH,
+            device_map="cpu",
             trust_remote_code=True
         )
     else:
@@ -103,7 +146,7 @@ except RuntimeError:
 lora_config = LoraConfig(
     r=8,
     lora_alpha=32,
-    target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+    target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
     lora_dropout=0.05,
     bias="none",
     task_type=TaskType.CAUSAL_LM,
