@@ -1,3 +1,4 @@
+from unsloth import FastLanguageModel # type: ignore
 import os
 import pandas as pd # type: ignore
 from typing import TypedDict, List
@@ -7,6 +8,7 @@ from peft import get_peft_model, LoraConfig, TaskType
 import torch
 from peft import prepare_model_for_kbit_training, LoraConfig, get_peft_model
 from datasets import load_dataset # type: ignore
+torch.backends.cudnn.benchmark = True
 
 # Constants can stay at module level
 MODEL_PATH = "./models/Llama-3.2-3B/"
@@ -80,63 +82,43 @@ def process_data():
     return conversations_jsonl
 
 def setup_model_and_tokenizer():
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-    
-    if torch.cuda.is_available():
-        print(f"CUDA available: {torch.cuda.get_device_name(0)}")
-        print(f"CUDA version: {torch.version.cuda}")
-        
-        print("Attempting 4-bit quantization...")
-        quantization_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_compute_dtype=torch.float16,
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_quant_type="nf4",
-            llm_int8_enable_fp32_cpu_offload=True
-        )
-        
-        print("Loading model...")
-        model = AutoModelForCausalLM.from_pretrained(
-            MODEL_PATH,
-            quantization_config=quantization_config,
-            torch_dtype=torch.float16,
-            device_map="auto",
-            trust_remote_code=True
-        )
-        print("Successfully loaded model with 4-bit quantization")
-    else:
-        user_input = input("CUDA is not available. Do you want to load on CPU? (Y/N): ")
-        if user_input.strip().lower() == "y":
-            print("Loading model on CPU (this might be slow)...")
-            model = AutoModelForCausalLM.from_pretrained(
-                MODEL_PATH,
-                device_map="cpu",
-                trust_remote_code=True,
-                low_cpu_mem_usage=True
-            )
-            print("Model loaded on CPU")
-        else:
-            print("Cancelled")
-            exit()
+    max_seq_length = 512  # You can go higher with Unsloth, if needed
 
-    model = prepare_model_for_kbit_training(model)
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
-    tokenizer.pad_token = END_OF_TEXT_TOKEN 
-
-    lora_config = LoraConfig(
-        r=8,
-        lora_alpha=16,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-        lora_dropout=0.1,
-        bias="none",
-        task_type=TaskType.CAUSAL_LM,
+    print("Loading model with Unsloth...")
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name = MODEL_PATH,
+        max_seq_length = max_seq_length,
+        dtype = torch.float16,
+        load_in_4bit = True,
+        token = None,
+        device_map = "auto",
     )
 
-    model = get_peft_model(model, lora_config)
+    tokenizer.pad_token = END_OF_TEXT_TOKEN
+
+    # lora_config = LoraConfig(
+    #     r = 8,
+    #     lora_alpha = 16,
+    #     target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+    #     lora_dropout = 0.1,
+    #     bias = "none",
+    #     task_type = TaskType.CAUSAL_LM
+    # )
+
+    model = FastLanguageModel.get_peft_model(
+        model,
+        r = 8,
+        target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        lora_alpha = 16,
+        lora_dropout = 0.1,
+        bias = "none",
+        use_gradient_checkpointing = True,
+        random_state = 42,
+        use_rslora = False,
+        loftq_config = None,
+)
     model.print_trainable_parameters()
-    # model.gradient_checkpointing_disable()
-    print("Model device:", next(model.parameters()).device)
-    
+
     return model, tokenizer
 
 def train_model(conversations_jsonl, model, tokenizer):
@@ -159,7 +141,7 @@ def train_model(conversations_jsonl, model, tokenizer):
         tokenize_fn,
         batched=True,
         remove_columns=["text"],
-        num_proc=4,
+        num_proc=1,
     )
 
     data_collator = DataCollatorForLanguageModeling(
@@ -170,8 +152,8 @@ def train_model(conversations_jsonl, model, tokenizer):
 
     training_args = TrainingArguments(
         output_dir="./lora-finetuned",
-        per_device_train_batch_size=8,
-        gradient_accumulation_steps=16,
+        per_device_train_batch_size=16,
+        gradient_accumulation_steps=4,
         num_train_epochs=3,
         learning_rate=1e-4,
         # deepspeed="ds_config.json",
@@ -180,10 +162,10 @@ def train_model(conversations_jsonl, model, tokenizer):
         logging_steps=10,
         save_steps=200,
         save_total_limit=3,
-        optim="adamw_bnb_8bit",
+        optim="adamw_8bit",
         optim_args="offload_optimizer=True,offload_param=True",
         remove_unused_columns=False,
-        dataloader_num_workers=6,
+        dataloader_num_workers=0,
         dataloader_pin_memory=True,
     )
 

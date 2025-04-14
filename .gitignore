@@ -5,5 +5,6 @@ data
 ml/venv
 ml/models
 ml/bitsandbytes
-.jsonl
+*.jsonl
 ml/lora-finetuned
+ml/unsloth_compiled_cache
