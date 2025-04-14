@@ -123,7 +123,7 @@ class MessageContext {
         string += `Message ID ${this.id}.`;
 
         if (this.repliedMessageId || this.repliedUserId) {
-            string += `\nReplying to`;
+            string += ` Replying to`;
 
             if (this.repliedMessageId) {
                 string += ` message ID ${this.repliedMessageId}`;
@@ -138,6 +138,8 @@ class MessageContext {
             } else {
                 string += " an unknown user";
             }
+
+            string += ".";
         }
 
         return string;
