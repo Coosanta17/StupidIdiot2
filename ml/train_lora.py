@@ -137,54 +137,62 @@ lora_config = LoraConfig(
 
 model = get_peft_model(model, lora_config)
 model.print_trainable_parameters()
+model.gradient_checkpointing_disable()
+print(">> Model device:", next(model.parameters()).device)
 
-dataset = load_dataset("json", data_files=conversations_jsonl, split="train")
+def main(conversations_jsonl, model, tokenizer):
+    dataset = load_dataset("json", data_files=conversations_jsonl, split="train")
 
-MAX_LENGTH = 1024
+    MAX_LENGTH = 1024
 
-def tokenize_fn(ex):
-    tokens = tokenizer(
+    def tokenize_fn(ex):
+        tokens = tokenizer(
         ex["text"],
         truncation=True,
         max_length=MAX_LENGTH,
         padding="max_length",
     )
     # For causal LM, labels = input_ids
-    tokens["labels"] = tokens["input_ids"].copy()
-    return tokens
+        tokens["labels"] = tokens["input_ids"].copy()
+        return tokens
 
-tokenized = dataset.map(
+    tokenized = dataset.map(
     tokenize_fn,
     batched=True,
     remove_columns=["text"],
-    num_proc=4,
+    num_proc=1,
 )
 
-data_collator = DataCollatorForLanguageModeling(
+    data_collator = DataCollatorForLanguageModeling(
     tokenizer=tokenizer,
     mlm=False,
     pad_to_multiple_of=8,
 )
 
-training_args = TrainingArguments(
+    training_args = TrainingArguments(
     output_dir="./lora-finetuned",
     per_device_train_batch_size=4,
     gradient_accumulation_steps=8,
     num_train_epochs=6,
     learning_rate=1e-4,
     fp16=True,
-    logging_steps=50,
+    logging_steps=10,
     save_steps=200,
     save_total_limit=3,
     remove_unused_columns=False,
+    dataloader_num_workers=2,
+    dataloader_pin_memory=True,
 )
 
-trainer = Trainer(
+    trainer = Trainer(
     model=model,
     args=training_args,
     train_dataset=tokenized,
     data_collator=data_collator,
 )
 
-trainer.train()
-trainer.save_model("./lora-finetuned")
+    trainer.train()
+    trainer.save_model("./lora-finetuned")
+
+if __name__ == '__main__':
+    main(conversations_jsonl, model, tokenizer)
