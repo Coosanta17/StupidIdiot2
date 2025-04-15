@@ -1,6 +1,5 @@
 from unsloth import FastLanguageModel # type: ignore
 import os
-import pandas as pd # type: ignore
 from typing import TypedDict, List
 import json
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, DataCollatorForLanguageModeling, Trainer, TrainingArguments
@@ -8,81 +7,16 @@ from peft import get_peft_model, LoraConfig, TaskType
 import torch
 from peft import prepare_model_for_kbit_training, LoraConfig, get_peft_model
 from datasets import load_dataset # type: ignore
+from data_formatter import format_conversations, END_OF_TEXT_TOKEN
+
 torch.backends.cudnn.benchmark = True
 
 # Constants can stay at module level
 MODEL_PATH = "./models/Llama-3.2-3B/"
-END_OF_TEXT_TOKEN = "<|end_of_text|>"
 
-# Class definitions can stay at module level
-class Message(TypedDict):
-    role: str
-    content: str
-
-class Conversation:
-    messages: List[Message]
-
-    def __init__(self):
-        self.messages = []
-
-    def append(self, message: Message):
-        self.messages.append(message)
-
-    def to_chat_format(self) -> List[dict]:
-        return [dict(message) for message in self.messages]
-    
-    def to_prompt_format(self) -> str:
-        if not self.messages:
-            print("Error: Empty conversation.")
-            return ""
-        
-        context_messages = self.messages[:-1]
-        response_message = self.messages[-1]
-        
-        result = "### Context:\n"
-        for msg in context_messages:
-            prefix = f"{msg['role']}: "
-            result += f"{prefix}{msg['content']}\n"
-        
-        result += "\n### Response:\n"
-        result += response_message["content"]
-        result += END_OF_TEXT_TOKEN
-        
-        return result
-
-def process_data():
-    df = pd.read_json('../data/processed/prompts.jsonl', lines=True)
-    data = df.to_dict('records')
-
-    conversations: List[Conversation] = []
-
-    for prompt in data:
-        conversation = Conversation()
-
-        for message in prompt["context"]:
-            role = message["role"]
-            content = message["content"]
-            message_id_info = message["context"]
-            
-            formatted_content = f"{message_id_info}\n{content}\n"
-            conversation.append(Message(role=role, content=formatted_content))
-
-        conversation.append(Message(role="system", content=prompt["instruction"]))
-        conversation.append(Message(role=f"User {prompt['responseUser']}", content=prompt["response"]))
-        conversations.append(conversation)
-
-    conversations_jsonl = './conversations_prompt_format.jsonl'
-
-    with open(conversations_jsonl, 'w', encoding='utf-8') as f:
-        for conversation in conversations:
-            json_obj = {"text": conversation.to_prompt_format()}
-            f.write(json.dumps(json_obj) + '\n')
-
-    print(f"Wrote {len(conversations)} conversations to {conversations_jsonl}")
-    return conversations_jsonl
 
 def setup_model_and_tokenizer():
-    max_seq_length = 512  # You can go higher with Unsloth, if needed
+    max_seq_length = 1024
 
     print("Loading model with Unsloth...")
     model, tokenizer = FastLanguageModel.from_pretrained(
@@ -133,7 +67,7 @@ def train_model(conversations_jsonl, model, tokenizer):
             max_length=MAX_LENGTH,
             padding="max_length",
         )
-        # For causal LM, labels = input_ids
+
         tokens["labels"] = tokens["input_ids"].copy()
         return tokens
 
@@ -180,7 +114,7 @@ def train_model(conversations_jsonl, model, tokenizer):
     trainer.save_model("./lora-finetuned")
 
 def main():
-    conversations_jsonl = process_data()
+    conversations_jsonl = format_conversations()
     
     model, tokenizer = setup_model_and_tokenizer()
     
