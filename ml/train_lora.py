@@ -87,7 +87,7 @@ def train_model(conversations_jsonl, model, tokenizer):
     training_args = TrainingArguments(
         output_dir="./lora-finetuned",
         per_device_train_batch_size=16,
-        gradient_accumulation_steps=4,
+        gradient_accumulation_steps=6,
         num_train_epochs=3,
         learning_rate=1e-4,
         # deepspeed="ds_config.json",
