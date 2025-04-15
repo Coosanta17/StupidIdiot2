@@ -1,17 +1,11 @@
 from unsloth import FastLanguageModel # type: ignore
-import os
-from typing import TypedDict, List
-import json
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, DataCollatorForLanguageModeling, Trainer, TrainingArguments
-from peft import get_peft_model, LoraConfig, TaskType
+from transformers import DataCollatorForLanguageModeling, Trainer, TrainingArguments
 import torch
-from peft import prepare_model_for_kbit_training, LoraConfig, get_peft_model
 from datasets import load_dataset # type: ignore
 from data_formatter import format_conversations, END_OF_TEXT_TOKEN
 
 torch.backends.cudnn.benchmark = True
 
-# Constants can stay at module level
 MODEL_PATH = "./models/Llama-3.2-3B/"
 
 
@@ -30,15 +24,6 @@ def setup_model_and_tokenizer():
 
     tokenizer.pad_token = END_OF_TEXT_TOKEN
 
-    # lora_config = LoraConfig(
-    #     r = 8,
-    #     lora_alpha = 16,
-    #     target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-    #     lora_dropout = 0.1,
-    #     bias = "none",
-    #     task_type = TaskType.CAUSAL_LM
-    # )
-
     model = FastLanguageModel.get_peft_model(
         model,
         r = 8,
@@ -50,7 +35,7 @@ def setup_model_and_tokenizer():
         random_state = 42,
         use_rslora = False,
         loftq_config = None,
-)
+    )
     model.print_trainable_parameters()
 
     return model, tokenizer
@@ -58,7 +43,7 @@ def setup_model_and_tokenizer():
 def train_model(conversations_jsonl, model, tokenizer):
     dataset = load_dataset("json", data_files=conversations_jsonl, split="train")
 
-    MAX_LENGTH = 512
+    MAX_LENGTH = 1024
 
     def tokenize_fn(ex):
         tokens = tokenizer(
@@ -87,11 +72,9 @@ def train_model(conversations_jsonl, model, tokenizer):
     training_args = TrainingArguments(
         output_dir="./lora-finetuned",
         per_device_train_batch_size=16,
-        gradient_accumulation_steps=6,
+        gradient_accumulation_steps=4,
         num_train_epochs=3,
         learning_rate=1e-4,
-        # deepspeed="ds_config.json",
-        #fp16=True,
         bf16=True,
         logging_steps=10,
         save_steps=200,
