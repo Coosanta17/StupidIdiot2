@@ -30,7 +30,7 @@ class Conversation:
         
         result = "### Context:\n"
         for msg in context_messages:
-            prefix = f"{msg['role']}: " if msg['role'] != "system" else ""
+            prefix = f"{msg['role']}: "
             result += f"{prefix}{msg['content']}\n"
         
         result += "\n### Response:\n"

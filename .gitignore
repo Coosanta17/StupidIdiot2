@@ -6,6 +6,5 @@ ml/venv
 ml/models
 ml/bitsandbytes
 *.jsonl
-ml/lora-finetuned*
+ml/lora-finetuned
 ml/unsloth_compiled_cache
-ml/exampletests.txt

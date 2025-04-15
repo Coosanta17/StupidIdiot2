@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 const DATA_DIRECTORY = "./data/unprocessed/";
-const MAX_CONVERSATION_LENGTH = 10;
+const MAX_CONVERSATION_LENGTH = 20;
 const ONE_HOUR = 3600000;
 
 class Message {
@@ -186,7 +186,15 @@ class Prompt {
         });
 
         const lastMessageUsername = toUsername(this.userIdMap.get(messages.at(-1)!.getAuthorId())!);
-        this.instruction = `(You are ${lastMessageUsername})`;
+        let instructionBuilder = `You are ${lastMessageUsername} `;
+        if (messages.length === 1) {
+            instructionBuilder += "starting";
+        } else {
+            instructionBuilder += "engaging in";
+        }
+        instructionBuilder += " a conversation on Discord";
+
+        this.instruction = instructionBuilder;
     }
 
     public toString(): string {
